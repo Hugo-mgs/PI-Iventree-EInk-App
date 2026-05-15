@@ -16,21 +16,24 @@ npm install --include=dev
 npm run dev
 ```
 
-## QR payload format
+## InvenTree editor flow
 
-This app is meant to scan a QR code on a physical tag and turn it into a tag-specific inventory update page.
+This app scans a tag QR code, resolves the tag id, loads the matching container from InvenTree, and lets you edit the container name through the API.
 
 Supported QR payloads:
 
 - A raw tag id, for example `TAG-001`
-- A full URL that already points to the inventory page, for example `https://inventory.example.com/inventory/update?tag=TAG-001`
+- A full URL that includes the tag in the query string, for example `https://app.example.com/?tag=TAG-001`
 
-If the QR contains only a tag id, configure the target page with these environment variables:
+The API is configured with these environment variables:
 
-- `VITE_INVENTREE_PAGE_BASE_URL` for the InvenTree host, for example `https://inventory.example.com`
-- `VITE_INVENTREE_PAGE_PATH` for the page path, defaulting to `/inventory/update`
+- `VITE_INVENTREE_API_BASE_URL` for the InvenTree host, for example `https://inventory.example.com`
+- `VITE_INVENTREE_CONTAINER_ENDPOINT_TEMPLATE` for the API endpoint path, defaulting to `/api/containers/{tag}/`
+- `VITE_INVENTREE_API_TOKEN` for the API token, if your InvenTree instance requires authentication
+- `VITE_INVENTREE_AUTH_SCHEME` for the auth scheme, defaulting to `Token`
+- `VITE_INVENTREE_UPDATE_METHOD` for the write method, defaulting to `PATCH`
 
-The resolved page will receive the tag id through the `tag` query parameter.
+The `{tag}` placeholder is replaced with the scanned tag id. The app sends the container name in the request body as `{ "name": "..." }`.
 
 ## React Compiler
 
