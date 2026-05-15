@@ -15,7 +15,7 @@ import BarcodeScanner from './BarcodeScanner'
 
 type ContainerRecord = Record<string, unknown>
 
-type LoadStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'error'
+type LoadStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'error' | 'not_found'
 
 function isUrl(value: string) {
   try {
@@ -137,6 +137,10 @@ export default function App() {
         })
 
         if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error('Tag not found')
+          }
+
           throw new Error(`Failed to load container (${response.status} ${response.statusText})`)
         }
 
@@ -154,8 +158,8 @@ export default function App() {
         }
 
         setContainerRecord(null)
-        setContainerName(tagId)
-        setStatus('error')
+        setContainerName('')
+        setStatus(error instanceof Error && error.message === 'Tag not found' ? 'not_found' : 'error')
         setMessage(
           error instanceof Error
             ? error.message
@@ -295,7 +299,13 @@ export default function App() {
               </Alert>
             ) : null}
 
-            {tagId ? (
+            {status === 'not_found' ? (
+              <Alert color="red" title="Tag not found">
+                The scanned tag id does not match any container in InvenTree.
+              </Alert>
+            ) : null}
+
+            {status === 'ready' ? (
               <Paper withBorder p="md" radius="md">
                 <Stack gap="md">
                   <Group justify="space-between" align="center">
@@ -335,7 +345,7 @@ export default function App() {
                     >
                       Reload
                     </Button>
-                    <Button onClick={handleSave} disabled={!containerName.trim() || status === 'loading'}>
+                    <Button onClick={handleSave} disabled={!containerName.trim()}>
                       Save changes
                     </Button>
                   </Group>
