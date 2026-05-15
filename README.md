@@ -16,6 +16,22 @@ npm install --include=dev
 npm run dev
 ```
 
+## QR payload format
+
+This app is meant to scan a QR code on a physical tag and turn it into a tag-specific inventory update page.
+
+Supported QR payloads:
+
+- A raw tag id, for example `TAG-001`
+- A full URL that already points to the inventory page, for example `https://inventory.example.com/inventory/update?tag=TAG-001`
+
+If the QR contains only a tag id, configure the target page with these environment variables:
+
+- `VITE_INVENTREE_PAGE_BASE_URL` for the InvenTree host, for example `https://inventory.example.com`
+- `VITE_INVENTREE_PAGE_PATH` for the page path, defaulting to `/inventory/update`
+
+The resolved page will receive the tag id through the `tag` query parameter.
+
 ## React Compiler
 
 The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
