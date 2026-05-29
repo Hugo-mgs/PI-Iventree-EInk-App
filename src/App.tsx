@@ -74,7 +74,7 @@ function getAuthHeaders(): Record<string, string> {
 function buildContainerApiUrl(tagId: string) {
   const endpointTemplate = getContainerEndpointTemplate()
   const encodedTag = encodeURIComponent(tagId)
-  const resolvedPath = endpointTemplate.replaceAll('{tag}', encodedTag)
+  const resolvedPath = endpointTemplate.replaceAll('{id}', encodedTag)
 
   if (isUrl(resolvedPath)) {
     return resolvedPath
