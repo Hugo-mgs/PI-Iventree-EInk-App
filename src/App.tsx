@@ -5,8 +5,10 @@ import {
   Button,
   Container,
   Group,
+  Loader,
   Paper,
   Stack,
+  Table,
   Text,
   TextInput,
   Title,
@@ -15,7 +17,23 @@ import BarcodeScanner from './BarcodeScanner'
 
 type ContainerRecord = Record<string, unknown>
 
+type StockItemRecord = {
+  pk: number
+  quantity: number
+  serial: string | null
+  batch: string | null
+  part: number
+  part_detail?: {
+    name?: string
+    full_name?: string
+    IPN?: string
+    description?: string
+  }
+}
+
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'error' | 'not_found'
+
+type StockLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 function isUrl(value: string) {
   try {
@@ -84,6 +102,41 @@ function buildContainerApiUrl(tagId: string) {
   return `${getApiBaseUrl()}${normalizedPath}`
 }
 
+function buildStockApiUrl(locationPk: number) {
+  const query = new URLSearchParams({
+    location: String(locationPk),
+    part_detail: 'true',
+    // Only items directly in this container, not in nested sublocations.
+    cascade: 'false',
+  })
+  return `${getApiBaseUrl()}/api/stock/?${query.toString()}`
+}
+
+function deriveContainerPk(record: ContainerRecord | null) {
+  if (!record) {
+    return null
+  }
+
+  const candidate = record.pk ?? record.id
+  return typeof candidate === 'number' ? candidate : null
+}
+
+function deriveStockItemName(item: StockItemRecord) {
+  return (
+    item.part_detail?.full_name?.trim() ||
+    item.part_detail?.name?.trim() ||
+    `Part #${item.part}`
+  )
+}
+
+function formatQuantity(item: StockItemRecord) {
+  if (item.serial) {
+    return `Serial ${item.serial}`
+  }
+
+  return Number(item.quantity).toLocaleString()
+}
+
 function deriveContainerName(record: ContainerRecord | null, fallback: string) {
   if (!record) {
     return fallback
@@ -102,6 +155,11 @@ export default function App() {
   const [containerName, setContainerName] = useState('')
   const [status, setStatus] = useState<LoadStatus>('idle')
   const [message, setMessage] = useState('')
+  const [stockItems, setStockItems] = useState<StockItemRecord[]>([])
+  const [stockStatus, setStockStatus] = useState<StockLoadStatus>('idle')
+  const [stockMessage, setStockMessage] = useState('')
+
+  const containerPk = useMemo(() => deriveContainerPk(containerRecord), [containerRecord])
 
   const apiUrl = useMemo(() => (tagId ? buildContainerApiUrl(tagId) : ''), [tagId])
 
@@ -174,6 +232,61 @@ export default function App() {
       abortController.abort()
     }
   }, [tagId])
+
+  useEffect(() => {
+    if (containerPk == null) {
+      setStockItems([])
+      setStockStatus('idle')
+      setStockMessage('')
+      return
+    }
+
+    const abortController = new AbortController()
+
+    const loadStock = async () => {
+      setStockStatus('loading')
+      setStockMessage('')
+
+      try {
+        const response = await fetch(buildStockApiUrl(containerPk), {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            ...getAuthHeaders(),
+          },
+          signal: abortController.signal,
+        })
+
+        if (!response.ok) {
+          throw new Error(`Failed to load stock items (${response.status} ${response.statusText})`)
+        }
+
+        const data = (await response.json()) as StockItemRecord[] | { results: StockItemRecord[] }
+        if (abortController.signal.aborted) {
+          return
+        }
+
+        setStockItems(Array.isArray(data) ? data : data.results ?? [])
+        setStockStatus('ready')
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          return
+        }
+
+        setStockItems([])
+        setStockStatus('error')
+        setStockMessage(
+          error instanceof Error ? error.message : 'Failed to load stock items from the InvenTree API.'
+        )
+      }
+    }
+
+    void loadStock()
+
+    return () => {
+      abortController.abort()
+    }
+  }, [containerPk])
 
   const openContainerForValue = (value: string) => {
     const resolvedTagId = extractTagId(value)
@@ -324,6 +437,68 @@ export default function App() {
                     onChange={(event) => setContainerName(event.currentTarget.value)}
                     placeholder="Container name"
                   />
+
+                  <div>
+                    <Group justify="space-between" align="center" mb="xs">
+                      <Text fw={600}>Items in this container</Text>
+                      {stockStatus === 'ready' ? (
+                        <Badge variant="light">{stockItems.length} item{stockItems.length === 1 ? '' : 's'}</Badge>
+                      ) : null}
+                    </Group>
+
+                    {stockStatus === 'loading' ? (
+                      <Group gap="sm">
+                        <Loader size="sm" />
+                        <Text size="sm" c="dimmed">
+                          Loading stock items...
+                        </Text>
+                      </Group>
+                    ) : null}
+
+                    {stockStatus === 'error' ? (
+                      <Alert color="red" title="Failed to load stock items">
+                        {stockMessage}
+                      </Alert>
+                    ) : null}
+
+                    {stockStatus === 'ready' && stockItems.length === 0 ? (
+                      <Alert color="gray" title="Empty container">
+                        This container has no stock items.
+                      </Alert>
+                    ) : null}
+
+                    {stockStatus === 'ready' && stockItems.length > 0 ? (
+                      <Table striped highlightOnHover withTableBorder>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Part</Table.Th>
+                            <Table.Th>IPN</Table.Th>
+                            <Table.Th>Batch</Table.Th>
+                            <Table.Th style={{ textAlign: 'right' }}>Stock</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {stockItems.map((item) => (
+                            <Table.Tr key={item.pk}>
+                              <Table.Td>
+                                <Text size="sm" fw={500}>
+                                  {deriveStockItemName(item)}
+                                </Text>
+                                {item.part_detail?.description ? (
+                                  <Text size="xs" c="dimmed">
+                                    {item.part_detail.description}
+                                  </Text>
+                                ) : null}
+                              </Table.Td>
+                              <Table.Td>{item.part_detail?.IPN || '—'}</Table.Td>
+                              <Table.Td>{item.batch || '—'}</Table.Td>
+                              <Table.Td style={{ textAlign: 'right' }}>{formatQuantity(item)}</Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    ) : null}
+                  </div>
 
                   <Text size="sm" c="dimmed">
                     Raw API response
