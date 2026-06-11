@@ -94,6 +94,27 @@ function QrIcon() {
   )
 }
 
+function TrashIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  )
+}
+
 export default function App() {
   const [scannerOpened, setScannerOpened] = useState(false)
   const [searchOpened, setSearchOpened] = useState(false)
@@ -116,6 +137,9 @@ export default function App() {
   const [detailItem, setDetailItem] = useState<StockItemRecord | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>(readHistory)
   const [flash, setFlash] = useState('')
+  const [deletingPk, setDeletingPk] = useState<number | null>(null)
+  const [deleteErrorPk, setDeleteErrorPk] = useState<number | null>(null)
+  const [confirmDeletePk, setConfirmDeletePk] = useState<number | null>(null)
   const savedResetRef = useRef<number | null>(null)
   const quantitySavedResetRef = useRef<number | null>(null)
   const flashResetRef = useRef<number | null>(null)
@@ -246,6 +270,8 @@ export default function App() {
     setEditedQuantities({})
     setQuantityErrorPk(null)
     setQuantitySavedPk(null)
+    setConfirmDeletePk(null)
+    setDeleteErrorPk(null)
     setDetailItem(null)
     setMoveItem(null)
     setAddItemOpened(false)
@@ -268,6 +294,8 @@ export default function App() {
     setEditedQuantities({})
     setQuantityErrorPk(null)
     setQuantitySavedPk(null)
+    setConfirmDeletePk(null)
+    setDeleteErrorPk(null)
     setDetailItem(null)
     setMoveItem(null)
     setHistory(readHistory())
@@ -316,6 +344,36 @@ export default function App() {
     } finally {
       setQuantitySavingPk(null)
     }
+  }
+
+  const handleDeleteItem = async (item: StockItemRecord) => {
+    // First tap arms the confirmation; second tap actually deletes.
+    if (confirmDeletePk !== item.pk) {
+      setConfirmDeletePk(item.pk)
+      setDeleteErrorPk(null)
+      return
+    }
+
+    setDeletingPk(item.pk)
+    setDeleteErrorPk(null)
+
+    try {
+      await apiSend(`${getApiBaseUrl()}/api/stock/${item.pk}/`, 'DELETE', undefined)
+      setStockItems((items) => items.filter((existing) => existing.pk !== item.pk))
+      clearEditedQuantity(item.pk)
+      setConfirmDeletePk(null)
+      showFlash(`Removed ${deriveStockItemName(item)}`)
+    } catch {
+      setDeleteErrorPk(item.pk)
+    } finally {
+      setDeletingPk(null)
+    }
+  }
+
+  const cancelItemEdit = (itemPk: number) => {
+    clearEditedQuantity(itemPk)
+    setConfirmDeletePk((current) => (current === itemPk ? null : current))
+    setDeleteErrorPk((current) => (current === itemPk ? null : current))
   }
 
   const handleSave = async () => {
@@ -591,6 +649,11 @@ export default function App() {
                     const isDirty = typeof edited === 'number' && edited !== originalQuantity
                     const isSaving = quantitySavingPk === item.pk
                     const hasError = quantityErrorPk === item.pk
+                    const isZero = currentQuantity === 0
+                    const isDeleting = deletingPk === item.pk
+                    const deleteHasError = deleteErrorPk === item.pk
+                    const isConfirmingDelete = confirmDeletePk === item.pk
+                    const showActions = isDirty || hasError || deleteHasError || (isZero && !item.serial)
 
                     return (
                       <Fragment key={item.pk}>
@@ -673,31 +736,50 @@ export default function App() {
                             )}
                           </Group>
 
-                          {isDirty || hasError ? (
+                          {showActions ? (
                             <Group justify="space-between" align="center">
-                              <Text size="xs" c={hasError ? 'red' : 'dimmed'}>
+                              <Text size="xs" c={hasError || deleteHasError ? 'red' : 'dimmed'} style={{ flex: 1, minWidth: 0 }}>
                                 {hasError
                                   ? "Couldn't update the stock. Try again."
-                                  : `Was ${originalQuantity.toLocaleString()}`}
+                                  : deleteHasError
+                                    ? "Couldn't delete the item. Try again."
+                                    : isZero
+                                      ? isConfirmingDelete
+                                        ? 'Delete permanently?'
+                                        : 'Empty — delete this item?'
+                                      : `Was ${originalQuantity.toLocaleString()}`}
                               </Text>
-                              <Group gap="xs">
+                              <Group gap="xs" wrap="nowrap">
                                 <Button
                                   variant="subtle"
                                   color="gray"
                                   size="compact-sm"
-                                  disabled={isSaving}
-                                  onClick={() => clearEditedQuantity(item.pk)}
+                                  disabled={isSaving || isDeleting}
+                                  onClick={() => cancelItemEdit(item.pk)}
                                 >
                                   Cancel
                                 </Button>
-                                <Button
-                                  size="compact-sm"
-                                  loading={isSaving}
-                                  disabled={!isDirty}
-                                  onClick={() => handleQuantitySave(item)}
-                                >
-                                  Update stock
-                                </Button>
+                                {isZero ? (
+                                  <Button
+                                    color="red"
+                                    variant={isConfirmingDelete ? 'filled' : 'light'}
+                                    size="compact-sm"
+                                    loading={isDeleting}
+                                    leftSection={<TrashIcon />}
+                                    onClick={() => handleDeleteItem(item)}
+                                  >
+                                    {isConfirmingDelete ? 'Confirm' : 'Delete'}
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="compact-sm"
+                                    loading={isSaving}
+                                    disabled={!isDirty}
+                                    onClick={() => handleQuantitySave(item)}
+                                  >
+                                    Update stock
+                                  </Button>
+                                )}
                               </Group>
                             </Group>
                           ) : (

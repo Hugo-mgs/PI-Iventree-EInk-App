@@ -137,6 +137,16 @@ export function buildPartSearchUrl(searchTerm: string) {
   return `${getApiBaseUrl()}/api/part/?${query.toString()}`
 }
 
+export function buildPartListUrl() {
+  const query = new URLSearchParams({
+    active: 'true',
+    // Newest parts first, so the list shows recently added items before searching.
+    ordering: '-pk',
+    limit: '25',
+  })
+  return `${getApiBaseUrl()}/api/part/?${query.toString()}`
+}
+
 export function buildLocationSearchUrl(searchTerm: string) {
   const query = new URLSearchParams({
     search: searchTerm,
