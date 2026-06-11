@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import {
   Alert,
+  Anchor,
   Badge,
   Box,
   Button,
@@ -117,6 +118,10 @@ function buildStockApiUrl(locationPk: number) {
   return `${getApiBaseUrl()}/api/stock/?${query.toString()}`
 }
 
+function buildContainerWebUrl(locationPk: number) {
+  return `${getApiBaseUrl()}/web/stock/location/${locationPk}`
+}
+
 function deriveContainerPk(record: ContainerRecord | null) {
   if (!record) {
     return null
@@ -177,6 +182,7 @@ export default function App() {
   const [scannerOpened, setScannerOpened] = useState(false)
   const [tagId, setTagId] = useState(readInitialTagId)
   const [manualInput, setManualInput] = useState('')
+  const [manualEntryVisible, setManualEntryVisible] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [containerRecord, setContainerRecord] = useState<ContainerRecord | null>(null)
   const [containerName, setContainerName] = useState('')
@@ -318,6 +324,7 @@ export default function App() {
   const goHome = () => {
     setTagId('')
     setManualInput('')
+    setManualEntryVisible(false)
     setContainerRecord(null)
     setContainerName('')
     setStatus('idle')
@@ -388,28 +395,42 @@ export default function App() {
             Scan QR code
           </Button>
 
-          <Divider label="or enter a tag id" labelPosition="center" />
-
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              openContainerForValue(manualInput)
-            }}
-          >
-            <Group gap="sm" wrap="nowrap">
-              <TextInput
-                flex={1}
-                size="md"
-                radius="md"
-                placeholder="e.g. TAG-001"
-                value={manualInput}
-                onChange={(event) => setManualInput(event.currentTarget.value)}
-              />
-              <Button type="submit" size="md" radius="md" variant="light" disabled={!manualInput.trim()}>
-                Open
-              </Button>
-            </Group>
-          </form>
+          {manualEntryVisible ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                openContainerForValue(manualInput)
+              }}
+            >
+              <Group gap="sm" wrap="nowrap">
+                <TextInput
+                  flex={1}
+                  size="md"
+                  radius="md"
+                  placeholder="e.g. TAG-001"
+                  value={manualInput}
+                  onChange={(event) => setManualInput(event.currentTarget.value)}
+                  autoFocus
+                />
+                <Button type="submit" size="md" radius="md" variant="light" disabled={!manualInput.trim()}>
+                  Open
+                </Button>
+              </Group>
+            </form>
+          ) : (
+            <Center>
+              <Anchor
+                component="button"
+                type="button"
+                size="xs"
+                c="dimmed"
+                underline="always"
+                onClick={() => setManualEntryVisible(true)}
+              >
+                Enter a tag id manually
+              </Anchor>
+            </Center>
+          )}
         </Stack>
       ) : null}
 
@@ -455,20 +476,30 @@ export default function App() {
 
       {status === 'ready' ? (
         <Stack gap="md">
-          <Group justify="space-between" align="center">
+          <Group>
             <Button variant="subtle" size="compact-md" px={0} onClick={goHome}>
-              ← New scan
-            </Button>
-            <Button variant="subtle" size="compact-md" onClick={() => setScannerOpened(true)}>
-              Scan next tag
+              ← Back
             </Button>
           </Group>
 
           <Paper withBorder radius="lg" p="lg">
             <Stack gap="sm">
-              <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6}>
-                Container
-              </Text>
+              <Group justify="space-between" align="center">
+                <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6}>
+                  Container
+                </Text>
+                {containerPk != null ? (
+                  <Anchor
+                    href={buildContainerWebUrl(containerPk)}
+                    target="_blank"
+                    rel="noreferrer"
+                    size="xs"
+                    fw={500}
+                  >
+                    Open in InvenTree ↗
+                  </Anchor>
+                ) : null}
+              </Group>
 
               <TextInput
                 size="md"
