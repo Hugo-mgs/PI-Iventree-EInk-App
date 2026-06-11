@@ -27,13 +27,14 @@ export default function BarcodeScanner({
     if (!opened || !scannerReady) return
 
     let cancelled = false
-    setStatus('starting')
-    setErrorMessage('')
 
     const scanner = new Html5Qrcode(mountId)
     scannerRef.current = scanner
 
     const startScanner = async () => {
+      setStatus('starting')
+      setErrorMessage('')
+
       try {
         await scanner.start(
           { facingMode: 'environment' },
@@ -91,7 +92,7 @@ export default function BarcodeScanner({
     <Modal
       opened={opened}
       onClose={onClose}
-      title="Scan barcode/QR"
+      title="Scan a tag"
       size="lg"
       centered
       onEnterTransitionEnd={() => {
@@ -120,7 +121,7 @@ export default function BarcodeScanner({
         )}
 
         <Text size="sm" c="dimmed">
-          Tip: Allow camera permission and prefer a well-lit area for better results.
+          Hold the QR code inside the frame and it will be detected automatically.
         </Text>
 
         <Group justify="flex-end">

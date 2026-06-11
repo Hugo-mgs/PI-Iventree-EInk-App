@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import {
   Alert,
   Badge,
+  Box,
   Button,
+  Center,
   Container,
+  Divider,
   Group,
   Loader,
   Paper,
   Stack,
-  Table,
   Text,
   TextInput,
+  ThemeIcon,
   Title,
 } from '@mantine/core'
 import BarcodeScanner from './BarcodeScanner'
@@ -31,9 +34,11 @@ type StockItemRecord = {
   }
 }
 
-type LoadStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'error' | 'not_found'
+type LoadStatus = 'idle' | 'loading' | 'ready' | 'error' | 'not_found'
 
 type StockLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 function isUrl(value: string) {
   try {
@@ -123,18 +128,18 @@ function deriveContainerPk(record: ContainerRecord | null) {
 
 function deriveStockItemName(item: StockItemRecord) {
   return (
-    item.part_detail?.full_name?.trim() ||
     item.part_detail?.name?.trim() ||
+    item.part_detail?.full_name?.trim() ||
     `Part #${item.part}`
   )
 }
 
 function formatQuantity(item: StockItemRecord) {
   if (item.serial) {
-    return `Serial ${item.serial}`
+    return `№ ${item.serial}`
   }
 
-  return Number(item.quantity).toLocaleString()
+  return `× ${Number(item.quantity).toLocaleString()}`
 }
 
 function deriveContainerName(record: ContainerRecord | null, fallback: string) {
@@ -146,22 +151,42 @@ function deriveContainerName(record: ContainerRecord | null, fallback: string) {
   return typeof candidate === 'string' && candidate.trim() ? candidate : fallback
 }
 
+function QrIcon() {
+  return (
+    <svg
+      width="30"
+      height="30"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <path d="M14 14h3v3h-3z" />
+      <path d="M21 14v.01M14 21h.01M18 18h.01M21 21h.01" />
+    </svg>
+  )
+}
+
 export default function App() {
   const [scannerOpened, setScannerOpened] = useState(false)
-  const [scannedCode, setScannedCode] = useState('')
   const [tagId, setTagId] = useState(readInitialTagId)
-  const [manualInput, setManualInput] = useState(readInitialTagId)
+  const [manualInput, setManualInput] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
   const [containerRecord, setContainerRecord] = useState<ContainerRecord | null>(null)
   const [containerName, setContainerName] = useState('')
-  const [status, setStatus] = useState<LoadStatus>('idle')
-  const [message, setMessage] = useState('')
+  const [status, setStatus] = useState<LoadStatus>(tagId ? 'loading' : 'idle')
+  const [saveState, setSaveState] = useState<SaveState>('idle')
   const [stockItems, setStockItems] = useState<StockItemRecord[]>([])
   const [stockStatus, setStockStatus] = useState<StockLoadStatus>('idle')
-  const [stockMessage, setStockMessage] = useState('')
+  const savedResetRef = useRef<number | null>(null)
 
-  const containerPk = useMemo(() => deriveContainerPk(containerRecord), [containerRecord])
-
-  const apiUrl = useMemo(() => (tagId ? buildContainerApiUrl(tagId) : ''), [tagId])
+  const containerPk = deriveContainerPk(containerRecord)
 
   useEffect(() => {
     const nextQuery = tagId ? `?tag=${encodeURIComponent(tagId)}` : ''
@@ -171,10 +196,6 @@ export default function App() {
 
   useEffect(() => {
     if (!tagId) {
-      setContainerRecord(null)
-      setContainerName('')
-      setStatus('idle')
-      setMessage('')
       return
     }
 
@@ -182,7 +203,6 @@ export default function App() {
 
     const loadContainer = async () => {
       setStatus('loading')
-      setMessage('')
 
       try {
         const response = await fetch(buildContainerApiUrl(tagId), {
@@ -195,11 +215,7 @@ export default function App() {
         })
 
         if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error('Tag not found')
-          }
-
-          throw new Error(`Failed to load container (${response.status} ${response.statusText})`)
+          throw new Error(response.status === 404 ? 'not_found' : 'error')
         }
 
         const data = (await response.json()) as ContainerRecord
@@ -217,12 +233,7 @@ export default function App() {
 
         setContainerRecord(null)
         setContainerName('')
-        setStatus(error instanceof Error && error.message === 'Tag not found' ? 'not_found' : 'error')
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : 'Failed to load container data from the InvenTree API.'
-        )
+        setStatus(error instanceof Error && error.message === 'not_found' ? 'not_found' : 'error')
       }
     }
 
@@ -231,13 +242,10 @@ export default function App() {
     return () => {
       abortController.abort()
     }
-  }, [tagId])
+  }, [tagId, reloadKey])
 
   useEffect(() => {
     if (containerPk == null) {
-      setStockItems([])
-      setStockStatus('idle')
-      setStockMessage('')
       return
     }
 
@@ -245,7 +253,6 @@ export default function App() {
 
     const loadStock = async () => {
       setStockStatus('loading')
-      setStockMessage('')
 
       try {
         const response = await fetch(buildStockApiUrl(containerPk), {
@@ -258,7 +265,7 @@ export default function App() {
         })
 
         if (!response.ok) {
-          throw new Error(`Failed to load stock items (${response.status} ${response.statusText})`)
+          throw new Error('error')
         }
 
         const data = (await response.json()) as StockItemRecord[] | { results: StockItemRecord[] }
@@ -268,16 +275,13 @@ export default function App() {
 
         setStockItems(Array.isArray(data) ? data : data.results ?? [])
         setStockStatus('ready')
-      } catch (error) {
+      } catch {
         if (abortController.signal.aborted) {
           return
         }
 
         setStockItems([])
         setStockStatus('error')
-        setStockMessage(
-          error instanceof Error ? error.message : 'Failed to load stock items from the InvenTree API.'
-        )
       }
     }
 
@@ -286,7 +290,15 @@ export default function App() {
     return () => {
       abortController.abort()
     }
-  }, [containerPk])
+  }, [containerPk, reloadKey])
+
+  useEffect(() => {
+    return () => {
+      if (savedResetRef.current != null) {
+        window.clearTimeout(savedResetRef.current)
+      }
+    }
+  }, [])
 
   const openContainerForValue = (value: string) => {
     const resolvedTagId = extractTagId(value)
@@ -294,22 +306,40 @@ export default function App() {
       return
     }
 
-    setScannedCode(value)
-    setManualInput(value)
+    setManualInput('')
+    setSaveState('idle')
+    setStockItems([])
+    setStockStatus('idle')
     setTagId(resolvedTagId)
+    setReloadKey((key) => key + 1)
     setScannerOpened(false)
   }
 
+  const goHome = () => {
+    setTagId('')
+    setManualInput('')
+    setContainerRecord(null)
+    setContainerName('')
+    setStatus('idle')
+    setSaveState('idle')
+    setStockItems([])
+    setStockStatus('idle')
+  }
+
   const handleSave = async () => {
-    if (!tagId || !apiUrl) {
+    if (!tagId) {
       return
     }
 
-    setStatus('saving')
-    setMessage('')
+    if (savedResetRef.current != null) {
+      window.clearTimeout(savedResetRef.current)
+      savedResetRef.current = null
+    }
+
+    setSaveState('saving')
 
     try {
-      const response = await fetch(apiUrl, {
+      const response = await fetch(buildContainerApiUrl(tagId), {
         method: (import.meta.env.VITE_INVENTREE_UPDATE_METHOD?.trim() || 'PATCH').toUpperCase(),
         headers: {
           'Content-Type': 'application/json',
@@ -320,7 +350,7 @@ export default function App() {
       })
 
       if (!response.ok) {
-        throw new Error(`Failed to save container (${response.status} ${response.statusText})`)
+        throw new Error('error')
       }
 
       const data = (await response.json().catch(() => null)) as ContainerRecord | null
@@ -329,213 +359,211 @@ export default function App() {
         setContainerName(deriveContainerName(data, containerName.trim()))
       }
 
-      setStatus('ready')
-      setMessage('Container updated successfully.')
-    } catch (error) {
-      setStatus('error')
-      setMessage(error instanceof Error ? error.message : 'Failed to save container changes.')
+      setSaveState('saved')
+      savedResetRef.current = window.setTimeout(() => {
+        setSaveState('idle')
+        savedResetRef.current = null
+      }, 2500)
+    } catch {
+      setSaveState('error')
     }
   }
 
   return (
-    <Container size="md" py="xl">
-      <Stack gap="lg">
-        <Paper p="xl" radius="lg" shadow="sm">
-          <Stack gap="md">
-            <div>
-              <Title order={1}>InvenTree container editor</Title>
-              <Text c="dimmed" mt="xs">
-                Scan a tag QR code or paste a tag id to load the matching container and update it through the API.
-              </Text>
-            </div>
+    <Container size={440} px="md" py="xl">
+      {status === 'idle' ? (
+        <Stack gap="xl" mt="8vh">
+          <Stack gap="sm" align="center" ta="center">
+            <ThemeIcon size={72} radius="50%" variant="light">
+              <QrIcon />
+            </ThemeIcon>
+            <Title order={2}>Scan a container tag</Title>
+            <Text c="dimmed" size="sm" maw={320}>
+              Point your camera at the QR code on a drawer or container to see what's inside and
+              rename it.
+            </Text>
+          </Stack>
 
-            <Alert color="blue" title="QR input">
-              The QR can contain a raw tag id or a URL with <Text span fw={600}>tag</Text>, <Text span fw={600}>id</Text>,
-              or <Text span fw={600}>code</Text> in the query string.
-            </Alert>
+          <Button size="lg" radius="md" fullWidth onClick={() => setScannerOpened(true)}>
+            Scan QR code
+          </Button>
 
-            <Group align="end" grow>
+          <Divider label="or enter a tag id" labelPosition="center" />
+
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              openContainerForValue(manualInput)
+            }}
+          >
+            <Group gap="sm" wrap="nowrap">
               <TextInput
-                label="Tag id or QR payload"
-                placeholder="TAG-001 or https://..."
+                flex={1}
+                size="md"
+                radius="md"
+                placeholder="e.g. TAG-001"
                 value={manualInput}
                 onChange={(event) => setManualInput(event.currentTarget.value)}
               />
-              <Button
-                onClick={() => {
-                  openContainerForValue(manualInput)
-                }}
-              >
-                Load container
+              <Button type="submit" size="md" radius="md" variant="light" disabled={!manualInput.trim()}>
+                Open
               </Button>
             </Group>
+          </form>
+        </Stack>
+      ) : null}
 
-            <Button variant="light" onClick={() => setScannerOpened(true)}>
-              Scan QR code
-            </Button>
-
-            {scannedCode ? (
-              <Alert color="green" title="Last scanned QR payload">
-                <Stack gap={4}>
-                  <Text size="sm">{scannedCode}</Text>
-                  <Text size="sm" c="dimmed">
-                    Resolved tag id: {tagId}
-                  </Text>
-                </Stack>
-              </Alert>
-            ) : (
-              <Alert color="gray" title="Ready">
-                Load a tag to see the current container record.
-              </Alert>
-            )}
-
-            {tagId ? (
-              <Alert color="teal" title="API endpoint">
-                <Stack gap={6}>
-                  <Text size="sm">{apiUrl}</Text>
-                  <Text size="sm" c="dimmed">
-                    This is the endpoint used to fetch and save the container record for the selected tag.
-                  </Text>
-                </Stack>
-              </Alert>
-            ) : null}
-
-            {status === 'loading' ? (
-              <Alert color="yellow" title="Loading container">
-                Fetching container data from InvenTree.
-              </Alert>
-            ) : null}
-
-            {message ? (
-              <Alert color={status === 'error' ? 'red' : 'green'} title={status === 'error' ? 'Error' : 'Status'}>
-                {message}
-              </Alert>
-            ) : null}
-
-            {status === 'not_found' ? (
-              <Alert color="red" title="Tag not found">
-                The scanned tag id does not match any container in InvenTree.
-              </Alert>
-            ) : null}
-
-            {status === 'ready' ? (
-              <Paper withBorder p="md" radius="md">
-                <Stack gap="md">
-                  <Group justify="space-between" align="center">
-                    <div>
-                      <Text fw={600}>Container name</Text>
-                      <Text size="sm" c="dimmed">
-                        Edit the value that will be sent back to the API.
-                      </Text>
-                    </div>
-                    <Badge variant="light">{status}</Badge>
-                  </Group>
-
-                  <TextInput
-                    label="Name"
-                    value={containerName}
-                    onChange={(event) => setContainerName(event.currentTarget.value)}
-                    placeholder="Container name"
-                  />
-
-                  <div>
-                    <Group justify="space-between" align="center" mb="xs">
-                      <Text fw={600}>Items in this container</Text>
-                      {stockStatus === 'ready' ? (
-                        <Badge variant="light">{stockItems.length} item{stockItems.length === 1 ? '' : 's'}</Badge>
-                      ) : null}
-                    </Group>
-
-                    {stockStatus === 'loading' ? (
-                      <Group gap="sm">
-                        <Loader size="sm" />
-                        <Text size="sm" c="dimmed">
-                          Loading stock items...
-                        </Text>
-                      </Group>
-                    ) : null}
-
-                    {stockStatus === 'error' ? (
-                      <Alert color="red" title="Failed to load stock items">
-                        {stockMessage}
-                      </Alert>
-                    ) : null}
-
-                    {stockStatus === 'ready' && stockItems.length === 0 ? (
-                      <Alert color="gray" title="Empty container">
-                        This container has no stock items.
-                      </Alert>
-                    ) : null}
-
-                    {stockStatus === 'ready' && stockItems.length > 0 ? (
-                      <Table striped highlightOnHover withTableBorder>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>Part</Table.Th>
-                            <Table.Th>IPN</Table.Th>
-                            <Table.Th>Batch</Table.Th>
-                            <Table.Th style={{ textAlign: 'right' }}>Stock</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {stockItems.map((item) => (
-                            <Table.Tr key={item.pk}>
-                              <Table.Td>
-                                <Text size="sm" fw={500}>
-                                  {deriveStockItemName(item)}
-                                </Text>
-                                {item.part_detail?.description ? (
-                                  <Text size="xs" c="dimmed">
-                                    {item.part_detail.description}
-                                  </Text>
-                                ) : null}
-                              </Table.Td>
-                              <Table.Td>{item.part_detail?.IPN || '—'}</Table.Td>
-                              <Table.Td>{item.batch || '—'}</Table.Td>
-                              <Table.Td style={{ textAlign: 'right' }}>{formatQuantity(item)}</Table.Td>
-                            </Table.Tr>
-                          ))}
-                        </Table.Tbody>
-                      </Table>
-                    ) : null}
-                  </div>
-
-                  <Text size="sm" c="dimmed">
-                    Raw API response
-                  </Text>
-                  <Paper withBorder p="sm" radius="sm">
-                    <Text component="pre" size="xs" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                      {JSON.stringify(containerRecord, null, 2)}
-                    </Text>
-                  </Paper>
-
-                  <Group justify="flex-end">
-                    <Button
-                      variant="default"
-                      onClick={() => {
-                        if (tagId) {
-                          openContainerForValue(tagId)
-                        }
-                      }}
-                    >
-                      Reload
-                    </Button>
-                    <Button onClick={handleSave} disabled={!containerName.trim()}>
-                      Save changes
-                    </Button>
-                  </Group>
-                </Stack>
-              </Paper>
-            ) : null}
+      {status === 'loading' ? (
+        <Center mih="60vh">
+          <Stack align="center" gap="sm">
+            <Loader />
+            <Text c="dimmed" size="sm">
+              Looking up tag…
+            </Text>
           </Stack>
-        </Paper>
+        </Center>
+      ) : null}
 
-        <BarcodeScanner
-          opened={scannerOpened}
-          onClose={() => setScannerOpened(false)}
-          onDetected={openContainerForValue}
-        />
-      </Stack>
+      {status === 'not_found' || status === 'error' ? (
+        <Stack gap="lg" mt="8vh">
+          <Alert
+            color={status === 'not_found' ? 'orange' : 'red'}
+            radius="md"
+            title={status === 'not_found' ? 'Tag not recognised' : 'Something went wrong'}
+          >
+            {status === 'not_found'
+              ? `No container is linked to the tag “${tagId}”.`
+              : 'The container could not be loaded. Check your connection and try again.'}
+          </Alert>
+
+          <Stack gap="sm">
+            {status === 'error' ? (
+              <Button radius="md" onClick={() => setReloadKey((key) => key + 1)}>
+                Try again
+              </Button>
+            ) : (
+              <Button radius="md" onClick={() => setScannerOpened(true)}>
+                Scan again
+              </Button>
+            )}
+            <Button variant="subtle" radius="md" onClick={goHome}>
+              Back to start
+            </Button>
+          </Stack>
+        </Stack>
+      ) : null}
+
+      {status === 'ready' ? (
+        <Stack gap="md">
+          <Group justify="space-between" align="center">
+            <Button variant="subtle" size="compact-md" px={0} onClick={goHome}>
+              ← New scan
+            </Button>
+            <Button variant="subtle" size="compact-md" onClick={() => setScannerOpened(true)}>
+              Scan next tag
+            </Button>
+          </Group>
+
+          <Paper withBorder radius="lg" p="lg">
+            <Stack gap="sm">
+              <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6}>
+                Container
+              </Text>
+
+              <TextInput
+                size="md"
+                radius="md"
+                label="Name"
+                placeholder="Container name"
+                value={containerName}
+                onChange={(event) => setContainerName(event.currentTarget.value)}
+              />
+
+              <Group justify="space-between" align="center">
+                <Text size="sm" c={saveState === 'error' ? 'red' : 'teal'} fw={500}>
+                  {saveState === 'saved' ? 'Saved ✓' : null}
+                  {saveState === 'error' ? "Couldn't save. Try again." : null}
+                </Text>
+                <Button
+                  radius="md"
+                  onClick={handleSave}
+                  loading={saveState === 'saving'}
+                  disabled={!containerName.trim()}
+                >
+                  Save name
+                </Button>
+              </Group>
+            </Stack>
+          </Paper>
+
+          <Paper withBorder radius="lg" p="lg">
+            <Stack gap="sm">
+              <Group justify="space-between" align="center">
+                <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6}>
+                  Contents
+                </Text>
+                {stockStatus === 'ready' && stockItems.length > 0 ? (
+                  <Badge variant="light" radius="sm">
+                    {stockItems.length} {stockItems.length === 1 ? 'item' : 'items'}
+                  </Badge>
+                ) : null}
+              </Group>
+
+              {stockStatus === 'loading' ? (
+                <Group gap="sm">
+                  <Loader size="xs" />
+                  <Text size="sm" c="dimmed">
+                    Loading items…
+                  </Text>
+                </Group>
+              ) : null}
+
+              {stockStatus === 'error' ? (
+                <Text size="sm" c="red">
+                  The items in this container could not be loaded.
+                </Text>
+              ) : null}
+
+              {stockStatus === 'ready' && stockItems.length === 0 ? (
+                <Text size="sm" c="dimmed">
+                  This container is empty.
+                </Text>
+              ) : null}
+
+              {stockStatus === 'ready' && stockItems.length > 0 ? (
+                <Stack gap={0}>
+                  {stockItems.map((item, index) => (
+                    <Fragment key={item.pk}>
+                      {index > 0 ? <Divider /> : null}
+                      <Group justify="space-between" align="center" wrap="nowrap" py="sm">
+                        <Box miw={0}>
+                          <Text size="sm" fw={500} truncate>
+                            {deriveStockItemName(item)}
+                          </Text>
+                          {item.part_detail?.description ? (
+                            <Text size="xs" c="dimmed" lineClamp={1}>
+                              {item.part_detail.description}
+                            </Text>
+                          ) : null}
+                        </Box>
+                        <Badge size="lg" variant="light" radius="sm" style={{ flexShrink: 0 }}>
+                          {formatQuantity(item)}
+                        </Badge>
+                      </Group>
+                    </Fragment>
+                  ))}
+                </Stack>
+              ) : null}
+            </Stack>
+          </Paper>
+        </Stack>
+      ) : null}
+
+      <BarcodeScanner
+        opened={scannerOpened}
+        onClose={() => setScannerOpened(false)}
+        onDetected={openContainerForValue}
+      />
     </Container>
   )
 }
