@@ -128,6 +128,18 @@ export function buildStockSearchUrl(searchTerm: string) {
   return `${getApiBaseUrl()}/api/stock/?${query.toString()}`
 }
 
+export function buildStockListUrl() {
+  const query = new URLSearchParams({
+    part_detail: 'true',
+    location_detail: 'true',
+    in_stock: 'true',
+    // Most recently changed stock first.
+    ordering: '-updated',
+    limit: '25',
+  })
+  return `${getApiBaseUrl()}/api/stock/?${query.toString()}`
+}
+
 export function buildPartSearchUrl(searchTerm: string) {
   const query = new URLSearchParams({
     search: searchTerm,
@@ -150,6 +162,14 @@ export function buildPartListUrl() {
 export function buildLocationSearchUrl(searchTerm: string) {
   const query = new URLSearchParams({
     search: searchTerm,
+    limit: '25',
+  })
+  return `${getApiBaseUrl()}/api/stock/location/?${query.toString()}`
+}
+
+export function buildLocationListUrl() {
+  const query = new URLSearchParams({
+    ordering: 'name',
     limit: '25',
   })
   return `${getApiBaseUrl()}/api/stock/location/?${query.toString()}`

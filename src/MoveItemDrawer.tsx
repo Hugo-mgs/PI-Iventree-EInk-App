@@ -1,7 +1,6 @@
 import { Fragment, useState } from 'react'
 import {
   Box,
-  Button,
   Divider,
   Drawer,
   Group,
@@ -12,15 +11,15 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import {
-  apiGet,
   apiSend,
+  buildLocationListUrl,
   buildLocationSearchUrl,
   deriveStockItemName,
   getApiBaseUrl,
-  normalizeList,
   type LocationRecord,
   type StockItemRecord,
 } from './api'
+import { useLiveSearch } from './useLiveSearch'
 
 type Props = {
   opened: boolean
@@ -40,33 +39,13 @@ function MoveItemForm({
   onMoved: Props['onMoved']
 }) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<LocationRecord[] | null>(null)
-  const [searching, setSearching] = useState(false)
-  const [searchFailed, setSearchFailed] = useState(false)
+  const { results, loading, failed, isDefault } = useLiveSearch<LocationRecord>(
+    query,
+    buildLocationListUrl,
+    buildLocationSearchUrl
+  )
   const [movingTo, setMovingTo] = useState<number | null>(null)
   const [moveFailed, setMoveFailed] = useState(false)
-
-  const handleSearch = async () => {
-    const searchTerm = query.trim()
-    if (!searchTerm) {
-      return
-    }
-
-    setSearching(true)
-    setSearchFailed(false)
-
-    try {
-      const data = await apiGet<LocationRecord[] | { results: LocationRecord[] }>(
-        buildLocationSearchUrl(searchTerm)
-      )
-      setResults(normalizeList(data))
-    } catch {
-      setResults(null)
-      setSearchFailed(true)
-    } finally {
-      setSearching(false)
-    }
-  }
 
   const handleMove = async (destination: LocationRecord) => {
     setMovingTo(destination.pk)
@@ -96,38 +75,17 @@ function MoveItemForm({
 
       <Divider />
 
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void handleSearch()
-        }}
-      >
-        <Group gap="sm" wrap="nowrap">
-          <TextInput
-            flex={1}
-            size="md"
-            radius="md"
-            placeholder="Search destination…"
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            autoFocus
-          />
-          <Button type="submit" size="md" radius="md" variant="light" disabled={!query.trim()}>
-            Search
-          </Button>
-        </Group>
-      </form>
+      <TextInput
+        size="md"
+        radius="md"
+        placeholder="Search destination…"
+        value={query}
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        rightSection={loading ? <Loader size="xs" /> : null}
+        autoFocus
+      />
 
-      {searching ? (
-        <Group gap="sm">
-          <Loader size="xs" />
-          <Text size="sm" c="dimmed">
-            Searching locations…
-          </Text>
-        </Group>
-      ) : null}
-
-      {searchFailed ? (
+      {failed ? (
         <Text size="sm" c="red">
           The location search failed. Try again.
         </Text>
@@ -139,14 +97,19 @@ function MoveItemForm({
         </Text>
       ) : null}
 
-      {!searching && results && results.length === 0 ? (
+      {!loading && results && results.length === 0 ? (
         <Text size="sm" c="dimmed">
-          No locations match “{query.trim()}”.
+          {query.trim() ? `No locations match “${query.trim()}”.` : 'No locations found.'}
         </Text>
       ) : null}
 
-      {!searching && results && results.length > 0 ? (
+      {results && results.length > 0 ? (
         <Stack gap={0}>
+          {isDefault ? (
+            <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6} pb={4}>
+              Locations
+            </Text>
+          ) : null}
           {results.map((location, index) => {
             const isCurrent = location.pk === currentLocationPk
             const isStructural = location.structural === true

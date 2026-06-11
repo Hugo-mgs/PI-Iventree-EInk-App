@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useState } from 'react'
 import {
   Box,
   Button,
@@ -14,14 +14,13 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import {
-  apiGet,
   apiSend,
   buildPartListUrl,
   buildPartSearchUrl,
   getApiBaseUrl,
-  normalizeList,
   type PartRecord,
 } from './api'
+import { useLiveSearch } from './useLiveSearch'
 
 type Props = {
   opened: boolean
@@ -32,72 +31,15 @@ type Props = {
 
 function AddItemForm({ locationPk, onAdded }: { locationPk: number | null; onAdded: Props['onAdded'] }) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<PartRecord[] | null>(null)
-  const [searching, setSearching] = useState(false)
-  const [searchFailed, setSearchFailed] = useState(false)
+  const { results, loading, failed, isDefault } = useLiveSearch<PartRecord>(
+    query,
+    buildPartListUrl,
+    buildPartSearchUrl
+  )
   const [selectedPart, setSelectedPart] = useState<PartRecord | null>(null)
   const [quantity, setQuantity] = useState<number | string>(1)
   const [saving, setSaving] = useState(false)
   const [saveFailed, setSaveFailed] = useState(false)
-  const [showingDefaults, setShowingDefaults] = useState(false)
-
-  useEffect(() => {
-    const abortController = new AbortController()
-
-    const loadDefaults = async () => {
-      setSearching(true)
-      setSearchFailed(false)
-
-      try {
-        const data = await apiGet<PartRecord[] | { results: PartRecord[] }>(
-          buildPartListUrl(),
-          abortController.signal
-        )
-        if (abortController.signal.aborted) {
-          return
-        }
-        setResults(normalizeList(data))
-        setShowingDefaults(true)
-      } catch {
-        if (abortController.signal.aborted) {
-          return
-        }
-        setResults(null)
-        setSearchFailed(true)
-      } finally {
-        if (!abortController.signal.aborted) {
-          setSearching(false)
-        }
-      }
-    }
-
-    void loadDefaults()
-
-    return () => {
-      abortController.abort()
-    }
-  }, [])
-
-  const handleSearch = async () => {
-    const searchTerm = query.trim()
-    if (!searchTerm) {
-      return
-    }
-
-    setSearching(true)
-    setSearchFailed(false)
-
-    try {
-      const data = await apiGet<PartRecord[] | { results: PartRecord[] }>(buildPartSearchUrl(searchTerm))
-      setResults(normalizeList(data))
-      setShowingDefaults(false)
-    } catch {
-      setResults(null)
-      setSearchFailed(true)
-    } finally {
-      setSearching(false)
-    }
-  }
 
   const handleAdd = async () => {
     if (!selectedPart || locationPk == null || typeof quantity !== 'number' || quantity <= 0) {
@@ -179,52 +121,31 @@ function AddItemForm({ locationPk, onAdded }: { locationPk: number | null; onAdd
 
   return (
     <Stack gap="md" pb="md">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void handleSearch()
-        }}
-      >
-        <Group gap="sm" wrap="nowrap">
-          <TextInput
-            flex={1}
-            size="md"
-            radius="md"
-            placeholder="Search parts…"
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            autoFocus
-          />
-          <Button type="submit" size="md" radius="md" variant="light" disabled={!query.trim()}>
-            Search
-          </Button>
-        </Group>
-      </form>
+      <TextInput
+        size="md"
+        radius="md"
+        placeholder="Search parts…"
+        value={query}
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        rightSection={loading ? <Loader size="xs" /> : null}
+        autoFocus
+      />
 
-      {searching ? (
-        <Group gap="sm">
-          <Loader size="xs" />
-          <Text size="sm" c="dimmed">
-            Searching parts…
-          </Text>
-        </Group>
-      ) : null}
-
-      {searchFailed ? (
+      {failed ? (
         <Text size="sm" c="red">
           The part search failed. Check your connection and try again.
         </Text>
       ) : null}
 
-      {!searching && results && results.length === 0 ? (
+      {!loading && results && results.length === 0 ? (
         <Text size="sm" c="dimmed">
-          No parts match “{query.trim()}”.
+          {query.trim() ? `No parts match “${query.trim()}”.` : 'No parts found.'}
         </Text>
       ) : null}
 
-      {!searching && results && results.length > 0 ? (
+      {results && results.length > 0 ? (
         <Stack gap={0}>
-          {showingDefaults ? (
+          {isDefault ? (
             <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6} pb={4}>
               Recently added parts
             </Text>

@@ -2,7 +2,6 @@ import { Fragment, useState } from 'react'
 import {
   Badge,
   Box,
-  Button,
   Divider,
   Drawer,
   Group,
@@ -13,12 +12,12 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import {
-  apiGet,
+  buildStockListUrl,
   buildStockSearchUrl,
   deriveStockItemName,
-  normalizeList,
   type StockItemRecord,
 } from './api'
+import { useLiveSearch } from './useLiveSearch'
 
 type Props = {
   opened: boolean
@@ -36,79 +35,43 @@ function formatStockQuantity(item: StockItemRecord) {
 
 function SearchForm({ onOpenLocation }: { onOpenLocation: Props['onOpenLocation'] }) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<StockItemRecord[] | null>(null)
-  const [searching, setSearching] = useState(false)
-  const [searchFailed, setSearchFailed] = useState(false)
-
-  const handleSearch = async () => {
-    const searchTerm = query.trim()
-    if (!searchTerm) {
-      return
-    }
-
-    setSearching(true)
-    setSearchFailed(false)
-
-    try {
-      const data = await apiGet<StockItemRecord[] | { results: StockItemRecord[] }>(
-        buildStockSearchUrl(searchTerm)
-      )
-      setResults(normalizeList(data))
-    } catch {
-      setResults(null)
-      setSearchFailed(true)
-    } finally {
-      setSearching(false)
-    }
-  }
+  const { results, loading, failed, isDefault } = useLiveSearch<StockItemRecord>(
+    query,
+    buildStockListUrl,
+    buildStockSearchUrl
+  )
 
   return (
     <Stack gap="md" pb="md">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void handleSearch()
-        }}
-      >
-        <Group gap="sm" wrap="nowrap">
-          <TextInput
-            flex={1}
-            size="md"
-            radius="md"
-            placeholder="e.g. M3 screws"
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            autoFocus
-          />
-          <Button type="submit" size="md" radius="md" variant="light" disabled={!query.trim()}>
-            Search
-          </Button>
-        </Group>
-      </form>
+      <TextInput
+        size="md"
+        radius="md"
+        placeholder="e.g. M3 screws"
+        value={query}
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        rightSection={loading ? <Loader size="xs" /> : null}
+        autoFocus
+      />
 
-      {searching ? (
-        <Group gap="sm">
-          <Loader size="xs" />
-          <Text size="sm" c="dimmed">
-            Searching stock…
-          </Text>
-        </Group>
-      ) : null}
-
-      {searchFailed ? (
+      {failed ? (
         <Text size="sm" c="red">
           The search failed. Check your connection and try again.
         </Text>
       ) : null}
 
-      {!searching && results && results.length === 0 ? (
+      {!loading && results && results.length === 0 ? (
         <Text size="sm" c="dimmed">
-          Nothing in stock matches “{query.trim()}”.
+          {query.trim() ? `Nothing in stock matches “${query.trim()}”.` : 'No stock items found.'}
         </Text>
       ) : null}
 
-      {!searching && results && results.length > 0 ? (
+      {results && results.length > 0 ? (
         <Stack gap={0}>
+          {isDefault ? (
+            <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6} pb={4}>
+              Recent stock
+            </Text>
+          ) : null}
           {results.map((item, index) => {
             const location = item.location_detail
             return (
