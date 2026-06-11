@@ -23,30 +23,27 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import BarcodeScanner from './BarcodeScanner'
-
-type ContainerRecord = Record<string, unknown>
-
-type StockItemRecord = {
-  pk: number
-  quantity: number
-  serial: string | null
-  batch: string | null
-  part: number
-  status_text?: string | null
-  packaging?: string | null
-  notes?: string | null
-  link?: string | null
-  updated?: string | null
-  part_detail?: {
-    name?: string
-    full_name?: string
-    IPN?: string
-    revision?: string
-    description?: string
-    units?: string
-    thumbnail?: string
-  }
-}
+import AddItemDrawer from './AddItemDrawer'
+import MoveItemDrawer from './MoveItemDrawer'
+import SearchDrawer from './SearchDrawer'
+import {
+  apiGet,
+  apiSend,
+  buildContainerApiUrl,
+  buildContainerWebUrl,
+  buildPartWebUrl,
+  buildStockApiUrl,
+  deriveContainerName,
+  deriveContainerPath,
+  deriveContainerPk,
+  deriveStockItemName,
+  extractTagId,
+  getApiBaseUrl,
+  normalizeList,
+  type ContainerRecord,
+  type StockItemRecord,
+} from './api'
+import { pushHistory, readHistory, type HistoryEntry } from './history'
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error' | 'not_found'
 
@@ -54,89 +51,8 @@ type StockLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
-function isUrl(value: string) {
-  try {
-    new URL(value)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function extractTagId(rawValue: string) {
-  const value = rawValue.trim()
-  if (!value) {
-    return ''
-  }
-
-  if (!isUrl(value)) {
-    return value
-  }
-
-  const url = new URL(value)
-  return (
-    url.searchParams.get('tag') ??
-    url.searchParams.get('code') ??
-    url.searchParams.get('id') ??
-    url.pathname.split('/').filter(Boolean).at(-1) ??
-    value
-  )
-}
-
 function readInitialTagId() {
   return new URLSearchParams(window.location.search).get('tag')?.trim() ?? ''
-}
-
-function getApiBaseUrl() {
-  return import.meta.env.VITE_INVENTREE_API_BASE_URL?.trim().replace(/\/$/, '') ?? window.location.origin
-}
-
-function getContainerEndpointTemplate() {
-  return import.meta.env.VITE_INVENTREE_CONTAINER_ENDPOINT_TEMPLATE?.trim() ?? '/api/containers/{tag}/'
-}
-
-function getAuthHeaders(): Record<string, string> {
-  const token = import.meta.env.VITE_INVENTREE_API_TOKEN?.trim()
-  const authScheme = import.meta.env.VITE_INVENTREE_AUTH_SCHEME?.trim() || 'Token'
-
-  const headers: Record<string, string> = {}
-
-  if (token) {
-    headers.Authorization = `${authScheme} ${token}`
-  }
-
-  return headers
-}
-
-function buildContainerApiUrl(tagId: string) {
-  const endpointTemplate = getContainerEndpointTemplate()
-  const encodedTag = encodeURIComponent(tagId)
-  const resolvedPath = endpointTemplate.replaceAll('{id}', encodedTag)
-
-  if (isUrl(resolvedPath)) {
-    return resolvedPath
-  }
-
-  const normalizedPath = resolvedPath.startsWith('/') ? resolvedPath : `/${resolvedPath}`
-  return `${getApiBaseUrl()}${normalizedPath}`
-}
-
-function buildStockApiUrl(locationPk: number) {
-  const query = new URLSearchParams({
-    location: String(locationPk),
-    part_detail: 'true',
-    // Only items directly in this container, not in nested sublocations.
-    cascade: 'false',
-  })
-  return `${getApiBaseUrl()}/api/stock/?${query.toString()}`
-}
-
-function buildContainerWebUrl(locationPk: number) {
-  return `${getApiBaseUrl()}/web/stock/location/${locationPk}`
-}
-
-function buildPartWebUrl(partPk: number) {
-  return `${getApiBaseUrl()}/web/part/${partPk}`
 }
 
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
@@ -154,32 +70,6 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
       </Text>
     </Group>
   )
-}
-
-function deriveContainerPk(record: ContainerRecord | null) {
-  if (!record) {
-    return null
-  }
-
-  const candidate = record.pk ?? record.id
-  return typeof candidate === 'number' ? candidate : null
-}
-
-function deriveStockItemName(item: StockItemRecord) {
-  return (
-    item.part_detail?.name?.trim() ||
-    item.part_detail?.full_name?.trim() ||
-    `Part #${item.part}`
-  )
-}
-
-function deriveContainerName(record: ContainerRecord | null, fallback: string) {
-  if (!record) {
-    return fallback
-  }
-
-  const candidate = record.name ?? record.label ?? record.title ?? record.container_name
-  return typeof candidate === 'string' && candidate.trim() ? candidate : fallback
 }
 
 function QrIcon() {
@@ -206,6 +96,9 @@ function QrIcon() {
 
 export default function App() {
   const [scannerOpened, setScannerOpened] = useState(false)
+  const [searchOpened, setSearchOpened] = useState(false)
+  const [addItemOpened, setAddItemOpened] = useState(false)
+  const [moveItem, setMoveItem] = useState<StockItemRecord | null>(null)
   const [tagId, setTagId] = useState(readInitialTagId)
   const [manualInput, setManualInput] = useState('')
   const [manualEntryVisible, setManualEntryVisible] = useState(false)
@@ -221,10 +114,14 @@ export default function App() {
   const [quantityErrorPk, setQuantityErrorPk] = useState<number | null>(null)
   const [quantitySavedPk, setQuantitySavedPk] = useState<number | null>(null)
   const [detailItem, setDetailItem] = useState<StockItemRecord | null>(null)
+  const [history, setHistory] = useState<HistoryEntry[]>(readHistory)
+  const [flash, setFlash] = useState('')
   const savedResetRef = useRef<number | null>(null)
   const quantitySavedResetRef = useRef<number | null>(null)
+  const flashResetRef = useRef<number | null>(null)
 
   const containerPk = deriveContainerPk(containerRecord)
+  const containerPath = deriveContainerPath(containerRecord)
 
   useEffect(() => {
     const nextQuery = tagId ? `?tag=${encodeURIComponent(tagId)}` : ''
@@ -243,27 +140,16 @@ export default function App() {
       setStatus('loading')
 
       try {
-        const response = await fetch(buildContainerApiUrl(tagId), {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            ...getAuthHeaders(),
-          },
-          signal: abortController.signal,
-        })
-
-        if (!response.ok) {
-          throw new Error(response.status === 404 ? 'not_found' : 'error')
-        }
-
-        const data = (await response.json()) as ContainerRecord
+        const data = await apiGet<ContainerRecord>(buildContainerApiUrl(tagId), abortController.signal)
         if (abortController.signal.aborted) {
           return
         }
 
+        const name = deriveContainerName(data, tagId)
         setContainerRecord(data)
-        setContainerName(deriveContainerName(data, tagId))
+        setContainerName(name)
         setStatus('ready')
+        setHistory(pushHistory(tagId, name))
       } catch (error) {
         if (abortController.signal.aborted) {
           return
@@ -271,7 +157,7 @@ export default function App() {
 
         setContainerRecord(null)
         setContainerName('')
-        setStatus(error instanceof Error && error.message === 'not_found' ? 'not_found' : 'error')
+        setStatus(error instanceof Error && error.message === '404' ? 'not_found' : 'error')
       }
     }
 
@@ -293,25 +179,15 @@ export default function App() {
       setStockStatus('loading')
 
       try {
-        const response = await fetch(buildStockApiUrl(containerPk), {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            ...getAuthHeaders(),
-          },
-          signal: abortController.signal,
-        })
-
-        if (!response.ok) {
-          throw new Error('error')
-        }
-
-        const data = (await response.json()) as StockItemRecord[] | { results: StockItemRecord[] }
+        const data = await apiGet<StockItemRecord[] | { results: StockItemRecord[] }>(
+          buildStockApiUrl(containerPk),
+          abortController.signal
+        )
         if (abortController.signal.aborted) {
           return
         }
 
-        setStockItems(Array.isArray(data) ? data : data.results ?? [])
+        setStockItems(normalizeList(data))
         setEditedQuantities({})
         setQuantityErrorPk(null)
         setStockStatus('ready')
@@ -340,10 +216,24 @@ export default function App() {
       if (quantitySavedResetRef.current != null) {
         window.clearTimeout(quantitySavedResetRef.current)
       }
+      if (flashResetRef.current != null) {
+        window.clearTimeout(flashResetRef.current)
+      }
     }
   }, [])
 
-  const openContainerForValue = (value: string) => {
+  const showFlash = (message: string) => {
+    if (flashResetRef.current != null) {
+      window.clearTimeout(flashResetRef.current)
+    }
+    setFlash(message)
+    flashResetRef.current = window.setTimeout(() => {
+      setFlash('')
+      flashResetRef.current = null
+    }, 3500)
+  }
+
+  const openContainerForTag = (value: string) => {
     const resolvedTagId = extractTagId(value)
     if (!resolvedTagId) {
       return
@@ -357,6 +247,9 @@ export default function App() {
     setQuantityErrorPk(null)
     setQuantitySavedPk(null)
     setDetailItem(null)
+    setMoveItem(null)
+    setAddItemOpened(false)
+    setSearchOpened(false)
     setTagId(resolvedTagId)
     setReloadKey((key) => key + 1)
     setScannerOpened(false)
@@ -376,7 +269,11 @@ export default function App() {
     setQuantityErrorPk(null)
     setQuantitySavedPk(null)
     setDetailItem(null)
+    setMoveItem(null)
+    setHistory(readHistory())
   }
+
+  const reloadStock = () => setReloadKey((key) => key + 1)
 
   const clearEditedQuantity = (itemPk: number) => {
     setEditedQuantities((previous) => {
@@ -397,19 +294,9 @@ export default function App() {
     setQuantityErrorPk(null)
 
     try {
-      const response = await fetch(`${getApiBaseUrl()}/api/stock/count/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify({ items: [{ pk: item.pk, quantity: edited }] }),
+      await apiSend(`${getApiBaseUrl()}/api/stock/count/`, 'POST', {
+        items: [{ pk: item.pk, quantity: edited }],
       })
-
-      if (!response.ok) {
-        throw new Error('error')
-      }
 
       setStockItems((items) =>
         items.map((existing) => (existing.pk === item.pk ? { ...existing, quantity: edited } : existing))
@@ -444,21 +331,12 @@ export default function App() {
     setSaveState('saving')
 
     try {
-      const response = await fetch(buildContainerApiUrl(tagId), {
-        method: (import.meta.env.VITE_INVENTREE_UPDATE_METHOD?.trim() || 'PATCH').toUpperCase(),
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify({ name: containerName.trim() }),
-      })
+      const data = await apiSend<ContainerRecord>(
+        buildContainerApiUrl(tagId),
+        (import.meta.env.VITE_INVENTREE_UPDATE_METHOD?.trim() || 'PATCH').toUpperCase(),
+        { name: containerName.trim() }
+      )
 
-      if (!response.ok) {
-        throw new Error('error')
-      }
-
-      const data = (await response.json().catch(() => null)) as ContainerRecord | null
       if (data) {
         setContainerRecord(data)
         setContainerName(deriveContainerName(data, containerName.trim()))
@@ -489,15 +367,45 @@ export default function App() {
             </Text>
           </Stack>
 
-          <Button size="lg" radius="md" fullWidth onClick={() => setScannerOpened(true)}>
-            Scan QR code
-          </Button>
+          <Stack gap="sm">
+            <Button size="lg" radius="md" fullWidth onClick={() => setScannerOpened(true)}>
+              Scan QR code
+            </Button>
+            <Button size="md" radius="md" variant="light" fullWidth onClick={() => setSearchOpened(true)}>
+              Find a part
+            </Button>
+          </Stack>
+
+          {history.length > 0 ? (
+            <Paper withBorder radius="lg" p="lg">
+              <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6} mb="sm">
+                Recently viewed
+              </Text>
+              <Stack gap={0}>
+                {history.map((entry, index) => (
+                  <Fragment key={entry.tag}>
+                    {index > 0 ? <Divider /> : null}
+                    <UnstyledButton onClick={() => openContainerForTag(entry.tag)} py="sm">
+                      <Group justify="space-between" wrap="nowrap">
+                        <Text size="sm" fw={500} truncate>
+                          {entry.name}
+                        </Text>
+                        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                          #{entry.tag}
+                        </Text>
+                      </Group>
+                    </UnstyledButton>
+                  </Fragment>
+                ))}
+              </Stack>
+            </Paper>
+          ) : null}
 
           {manualEntryVisible ? (
             <form
               onSubmit={(event) => {
                 event.preventDefault()
-                openContainerForValue(manualInput)
+                openContainerForTag(manualInput)
               }}
             >
               <Group gap="sm" wrap="nowrap">
@@ -557,7 +465,7 @@ export default function App() {
 
           <Stack gap="sm">
             {status === 'error' ? (
-              <Button radius="md" onClick={() => setReloadKey((key) => key + 1)}>
+              <Button radius="md" onClick={reloadStock}>
                 Try again
               </Button>
             ) : (
@@ -574,11 +482,20 @@ export default function App() {
 
       {status === 'ready' ? (
         <Stack gap="md">
-          <Group>
+          <Group justify="space-between" align="center">
             <Button variant="subtle" size="compact-md" px={0} onClick={goHome}>
               ← Back
             </Button>
+            <Button variant="subtle" size="compact-md" onClick={() => setSearchOpened(true)}>
+              Find a part
+            </Button>
           </Group>
+
+          {flash ? (
+            <Alert color="teal" radius="md" py="xs">
+              {flash}
+            </Alert>
+          ) : null}
 
           <Paper withBorder radius="lg" p="lg">
             <Stack gap="sm">
@@ -607,6 +524,12 @@ export default function App() {
                 value={containerName}
                 onChange={(event) => setContainerName(event.currentTarget.value)}
               />
+
+              {containerPath ? (
+                <Text size="xs" c="dimmed">
+                  {containerPath.split('/').join(' / ')}
+                </Text>
+              ) : null}
 
               <Group justify="space-between" align="center">
                 <Text size="sm" c={saveState === 'error' ? 'red' : 'teal'} fw={500}>
@@ -665,8 +588,7 @@ export default function App() {
                     const originalQuantity = Number(item.quantity)
                     const edited = editedQuantities[item.pk]
                     const currentQuantity = edited === undefined ? originalQuantity : edited
-                    const isDirty =
-                      typeof edited === 'number' && edited !== originalQuantity
+                    const isDirty = typeof edited === 'number' && edited !== originalQuantity
                     const isSaving = quantitySavingPk === item.pk
                     const hasError = quantityErrorPk === item.pk
 
@@ -778,18 +700,42 @@ export default function App() {
                                 </Button>
                               </Group>
                             </Group>
-                          ) : null}
-
-                          {quantitySavedPk === item.pk && !isDirty ? (
-                            <Text size="xs" c="teal" fw={500}>
-                              Stock updated in InvenTree ✓
-                            </Text>
-                          ) : null}
+                          ) : (
+                            <Group justify="space-between" align="center">
+                              {quantitySavedPk === item.pk ? (
+                                <Text size="xs" c="teal" fw={500}>
+                                  Stock updated in InvenTree ✓
+                                </Text>
+                              ) : (
+                                <span />
+                              )}
+                              <Button
+                                variant="subtle"
+                                color="gray"
+                                size="compact-sm"
+                                onClick={() => setMoveItem(item)}
+                              >
+                                Move
+                              </Button>
+                            </Group>
+                          )}
                         </Stack>
                       </Fragment>
                     )
                   })}
                 </Stack>
+              ) : null}
+
+              {stockStatus === 'ready' ? (
+                <Button
+                  variant="light"
+                  radius="md"
+                  mt="xs"
+                  onClick={() => setAddItemOpened(true)}
+                  disabled={containerPk == null}
+                >
+                  + Add item
+                </Button>
               ) : null}
             </Stack>
           </Paper>
@@ -871,10 +817,42 @@ export default function App() {
         ) : null}
       </Drawer>
 
+      <SearchDrawer
+        opened={searchOpened}
+        onClose={() => setSearchOpened(false)}
+        onOpenLocation={(locationPk) => {
+          setSearchOpened(false)
+          openContainerForTag(String(locationPk))
+        }}
+      />
+
+      <AddItemDrawer
+        opened={addItemOpened}
+        onClose={() => setAddItemOpened(false)}
+        locationPk={containerPk}
+        onAdded={(message) => {
+          setAddItemOpened(false)
+          showFlash(message)
+          reloadStock()
+        }}
+      />
+
+      <MoveItemDrawer
+        opened={moveItem != null}
+        onClose={() => setMoveItem(null)}
+        item={moveItem}
+        currentLocationPk={containerPk}
+        onMoved={(message) => {
+          setMoveItem(null)
+          showFlash(message)
+          reloadStock()
+        }}
+      />
+
       <BarcodeScanner
         opened={scannerOpened}
         onClose={() => setScannerOpened(false)}
-        onDetected={openContainerForValue}
+        onDetected={openContainerForTag}
       />
     </Container>
   )
