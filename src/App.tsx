@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -8,14 +9,18 @@ import {
   Center,
   Container,
   Divider,
+  Drawer,
   Group,
+  Image,
   Loader,
+  NumberInput,
   Paper,
   Stack,
   Text,
   TextInput,
   ThemeIcon,
   Title,
+  UnstyledButton,
 } from '@mantine/core'
 import BarcodeScanner from './BarcodeScanner'
 
@@ -27,11 +32,19 @@ type StockItemRecord = {
   serial: string | null
   batch: string | null
   part: number
+  status_text?: string | null
+  packaging?: string | null
+  notes?: string | null
+  link?: string | null
+  updated?: string | null
   part_detail?: {
     name?: string
     full_name?: string
     IPN?: string
+    revision?: string
     description?: string
+    units?: string
+    thumbnail?: string
   }
 }
 
@@ -122,6 +135,27 @@ function buildContainerWebUrl(locationPk: number) {
   return `${getApiBaseUrl()}/web/stock/location/${locationPk}`
 }
 
+function buildPartWebUrl(partPk: number) {
+  return `${getApiBaseUrl()}/web/part/${partPk}`
+}
+
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  if (value == null || value === '') {
+    return null
+  }
+
+  return (
+    <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
+      <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
+        {label}
+      </Text>
+      <Text size="sm" fw={500} ta="right" style={{ wordBreak: 'break-word' }}>
+        {value}
+      </Text>
+    </Group>
+  )
+}
+
 function deriveContainerPk(record: ContainerRecord | null) {
   if (!record) {
     return null
@@ -137,14 +171,6 @@ function deriveStockItemName(item: StockItemRecord) {
     item.part_detail?.full_name?.trim() ||
     `Part #${item.part}`
   )
-}
-
-function formatQuantity(item: StockItemRecord) {
-  if (item.serial) {
-    return `№ ${item.serial}`
-  }
-
-  return `× ${Number(item.quantity).toLocaleString()}`
 }
 
 function deriveContainerName(record: ContainerRecord | null, fallback: string) {
@@ -190,7 +216,13 @@ export default function App() {
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [stockItems, setStockItems] = useState<StockItemRecord[]>([])
   const [stockStatus, setStockStatus] = useState<StockLoadStatus>('idle')
+  const [editedQuantities, setEditedQuantities] = useState<Record<number, number | ''>>({})
+  const [quantitySavingPk, setQuantitySavingPk] = useState<number | null>(null)
+  const [quantityErrorPk, setQuantityErrorPk] = useState<number | null>(null)
+  const [quantitySavedPk, setQuantitySavedPk] = useState<number | null>(null)
+  const [detailItem, setDetailItem] = useState<StockItemRecord | null>(null)
   const savedResetRef = useRef<number | null>(null)
+  const quantitySavedResetRef = useRef<number | null>(null)
 
   const containerPk = deriveContainerPk(containerRecord)
 
@@ -280,6 +312,8 @@ export default function App() {
         }
 
         setStockItems(Array.isArray(data) ? data : data.results ?? [])
+        setEditedQuantities({})
+        setQuantityErrorPk(null)
         setStockStatus('ready')
       } catch {
         if (abortController.signal.aborted) {
@@ -303,6 +337,9 @@ export default function App() {
       if (savedResetRef.current != null) {
         window.clearTimeout(savedResetRef.current)
       }
+      if (quantitySavedResetRef.current != null) {
+        window.clearTimeout(quantitySavedResetRef.current)
+      }
     }
   }, [])
 
@@ -316,6 +353,10 @@ export default function App() {
     setSaveState('idle')
     setStockItems([])
     setStockStatus('idle')
+    setEditedQuantities({})
+    setQuantityErrorPk(null)
+    setQuantitySavedPk(null)
+    setDetailItem(null)
     setTagId(resolvedTagId)
     setReloadKey((key) => key + 1)
     setScannerOpened(false)
@@ -331,6 +372,63 @@ export default function App() {
     setSaveState('idle')
     setStockItems([])
     setStockStatus('idle')
+    setEditedQuantities({})
+    setQuantityErrorPk(null)
+    setQuantitySavedPk(null)
+    setDetailItem(null)
+  }
+
+  const clearEditedQuantity = (itemPk: number) => {
+    setEditedQuantities((previous) => {
+      const next = { ...previous }
+      delete next[itemPk]
+      return next
+    })
+    setQuantityErrorPk((current) => (current === itemPk ? null : current))
+  }
+
+  const handleQuantitySave = async (item: StockItemRecord) => {
+    const edited = editedQuantities[item.pk]
+    if (typeof edited !== 'number' || edited < 0) {
+      return
+    }
+
+    setQuantitySavingPk(item.pk)
+    setQuantityErrorPk(null)
+
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/stock/count/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ items: [{ pk: item.pk, quantity: edited }] }),
+      })
+
+      if (!response.ok) {
+        throw new Error('error')
+      }
+
+      setStockItems((items) =>
+        items.map((existing) => (existing.pk === item.pk ? { ...existing, quantity: edited } : existing))
+      )
+      clearEditedQuantity(item.pk)
+
+      if (quantitySavedResetRef.current != null) {
+        window.clearTimeout(quantitySavedResetRef.current)
+      }
+      setQuantitySavedPk(item.pk)
+      quantitySavedResetRef.current = window.setTimeout(() => {
+        setQuantitySavedPk(null)
+        quantitySavedResetRef.current = null
+      }, 3000)
+    } catch {
+      setQuantityErrorPk(item.pk)
+    } finally {
+      setQuantitySavingPk(null)
+    }
   }
 
   const handleSave = async () => {
@@ -407,7 +505,7 @@ export default function App() {
                   flex={1}
                   size="md"
                   radius="md"
-                  placeholder="e.g. TAG-001"
+                  placeholder="e.g. 1"
                   value={manualInput}
                   onChange={(event) => setManualInput(event.currentTarget.value)}
                   autoFocus
@@ -486,7 +584,7 @@ export default function App() {
             <Stack gap="sm">
               <Group justify="space-between" align="center">
                 <Text size="xs" tt="uppercase" fw={600} c="dimmed" lts={0.6}>
-                  Container
+                  Drawer
                 </Text>
                 {containerPk != null ? (
                   <Anchor
@@ -563,32 +661,215 @@ export default function App() {
 
               {stockStatus === 'ready' && stockItems.length > 0 ? (
                 <Stack gap={0}>
-                  {stockItems.map((item, index) => (
-                    <Fragment key={item.pk}>
-                      {index > 0 ? <Divider /> : null}
-                      <Group justify="space-between" align="center" wrap="nowrap" py="sm">
-                        <Box miw={0}>
-                          <Text size="sm" fw={500} truncate>
-                            {deriveStockItemName(item)}
-                          </Text>
-                          {item.part_detail?.description ? (
-                            <Text size="xs" c="dimmed" lineClamp={1}>
-                              {item.part_detail.description}
+                  {stockItems.map((item, index) => {
+                    const originalQuantity = Number(item.quantity)
+                    const edited = editedQuantities[item.pk]
+                    const currentQuantity = edited === undefined ? originalQuantity : edited
+                    const isDirty =
+                      typeof edited === 'number' && edited !== originalQuantity
+                    const isSaving = quantitySavingPk === item.pk
+                    const hasError = quantityErrorPk === item.pk
+
+                    return (
+                      <Fragment key={item.pk}>
+                        {index > 0 ? <Divider /> : null}
+                        <Stack gap={6} py="sm">
+                          <Group justify="space-between" align="center" wrap="nowrap">
+                            <UnstyledButton
+                              onClick={() => setDetailItem(item)}
+                              style={{ minWidth: 0, flex: 1 }}
+                              aria-label={`Show details for ${deriveStockItemName(item)}`}
+                            >
+                              <Text size="sm" fw={500} truncate>
+                                {deriveStockItemName(item)}
+                              </Text>
+                              {item.part_detail?.description ? (
+                                <Text size="xs" c="dimmed" lineClamp={1}>
+                                  {item.part_detail.description}
+                                </Text>
+                              ) : null}
+                            </UnstyledButton>
+
+                            {item.serial ? (
+                              <Badge size="lg" variant="light" radius="sm" style={{ flexShrink: 0 }}>
+                                № {item.serial}
+                              </Badge>
+                            ) : (
+                              <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
+                                <ActionIcon
+                                  variant="default"
+                                  size="lg"
+                                  radius="md"
+                                  aria-label="Decrease quantity"
+                                  disabled={isSaving || typeof currentQuantity !== 'number' || currentQuantity <= 0}
+                                  onClick={() =>
+                                    setEditedQuantities((previous) => ({
+                                      ...previous,
+                                      [item.pk]: Math.max(
+                                        0,
+                                        (typeof currentQuantity === 'number' ? currentQuantity : 0) - 1
+                                      ),
+                                    }))
+                                  }
+                                >
+                                  −
+                                </ActionIcon>
+                                <NumberInput
+                                  value={currentQuantity}
+                                  onChange={(value) =>
+                                    setEditedQuantities((previous) => ({
+                                      ...previous,
+                                      [item.pk]: typeof value === 'number' ? value : '',
+                                    }))
+                                  }
+                                  min={0}
+                                  hideControls
+                                  size="sm"
+                                  w={64}
+                                  radius="md"
+                                  disabled={isSaving}
+                                  styles={{ input: { textAlign: 'center' } }}
+                                  aria-label="Quantity"
+                                />
+                                <ActionIcon
+                                  variant="default"
+                                  size="lg"
+                                  radius="md"
+                                  aria-label="Increase quantity"
+                                  disabled={isSaving}
+                                  onClick={() =>
+                                    setEditedQuantities((previous) => ({
+                                      ...previous,
+                                      [item.pk]:
+                                        (typeof currentQuantity === 'number' ? currentQuantity : 0) + 1,
+                                    }))
+                                  }
+                                >
+                                  +
+                                </ActionIcon>
+                              </Group>
+                            )}
+                          </Group>
+
+                          {isDirty || hasError ? (
+                            <Group justify="space-between" align="center">
+                              <Text size="xs" c={hasError ? 'red' : 'dimmed'}>
+                                {hasError
+                                  ? "Couldn't update the stock. Try again."
+                                  : `Was ${originalQuantity.toLocaleString()}`}
+                              </Text>
+                              <Group gap="xs">
+                                <Button
+                                  variant="subtle"
+                                  color="gray"
+                                  size="compact-sm"
+                                  disabled={isSaving}
+                                  onClick={() => clearEditedQuantity(item.pk)}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  size="compact-sm"
+                                  loading={isSaving}
+                                  disabled={!isDirty}
+                                  onClick={() => handleQuantitySave(item)}
+                                >
+                                  Update stock
+                                </Button>
+                              </Group>
+                            </Group>
+                          ) : null}
+
+                          {quantitySavedPk === item.pk && !isDirty ? (
+                            <Text size="xs" c="teal" fw={500}>
+                              Stock updated in InvenTree ✓
                             </Text>
                           ) : null}
-                        </Box>
-                        <Badge size="lg" variant="light" radius="sm" style={{ flexShrink: 0 }}>
-                          {formatQuantity(item)}
-                        </Badge>
-                      </Group>
-                    </Fragment>
-                  ))}
+                        </Stack>
+                      </Fragment>
+                    )
+                  })}
                 </Stack>
               ) : null}
             </Stack>
           </Paper>
         </Stack>
       ) : null}
+
+      <Drawer
+        opened={detailItem != null}
+        onClose={() => setDetailItem(null)}
+        position="bottom"
+        radius="lg"
+        title="Item details"
+        styles={{ title: { fontWeight: 600 } }}
+      >
+        {detailItem ? (
+          <Stack gap="md" pb="md">
+            <Group wrap="nowrap" gap="md" align="center">
+              {detailItem.part_detail?.thumbnail ? (
+                <Image
+                  src={`${getApiBaseUrl()}${detailItem.part_detail.thumbnail}`}
+                  w={56}
+                  h={56}
+                  radius="md"
+                  fit="contain"
+                  alt=""
+                />
+              ) : null}
+              <Box miw={0}>
+                <Text fw={600}>{deriveStockItemName(detailItem)}</Text>
+                {detailItem.part_detail?.description ? (
+                  <Text size="sm" c="dimmed">
+                    {detailItem.part_detail.description}
+                  </Text>
+                ) : null}
+              </Box>
+            </Group>
+
+            <Divider />
+
+            <Stack gap={8}>
+              {detailItem.serial ? (
+                <DetailRow label="Serial number" value={detailItem.serial} />
+              ) : (
+                <DetailRow
+                  label="In stock"
+                  value={`${Number(detailItem.quantity).toLocaleString()}${
+                    detailItem.part_detail?.units ? ` ${detailItem.part_detail.units}` : ''
+                  }`}
+                />
+              )}
+              <DetailRow label="Part number" value={detailItem.part_detail?.IPN} />
+              <DetailRow label="Revision" value={detailItem.part_detail?.revision} />
+              <DetailRow label="Batch" value={detailItem.batch} />
+              <DetailRow label="Status" value={detailItem.status_text} />
+              <DetailRow label="Packaging" value={detailItem.packaging} />
+              <DetailRow label="Last updated" value={detailItem.updated} />
+              <DetailRow label="Notes" value={detailItem.notes} />
+            </Stack>
+
+            <Divider />
+
+            <Stack gap="xs">
+              <Anchor
+                href={buildPartWebUrl(detailItem.part)}
+                target="_blank"
+                rel="noreferrer"
+                size="sm"
+                fw={500}
+              >
+                Open part in InvenTree ↗
+              </Anchor>
+              {detailItem.link ? (
+                <Anchor href={detailItem.link} target="_blank" rel="noreferrer" size="sm" fw={500}>
+                  External link ↗
+                </Anchor>
+              ) : null}
+            </Stack>
+          </Stack>
+        ) : null}
+      </Drawer>
 
       <BarcodeScanner
         opened={scannerOpened}
