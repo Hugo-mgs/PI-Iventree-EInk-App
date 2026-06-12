@@ -18,7 +18,6 @@ import {
   Stack,
   Text,
   TextInput,
-  ThemeIcon,
   Title,
   UnstyledButton,
 } from '@mantine/core'
@@ -72,24 +71,17 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-function QrIcon() {
+function InkstockMark({ size = 72 }: { size?: number }) {
+  // Ink drop sliced into stacked inventory layers. Tile + bars use the theme
+  // primary colour so they follow whatever Mantine primaryColor is set to.
+  const brand = 'var(--mantine-primary-color-filled)'
   return (
-    <svg
-      width="30"
-      height="30"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-      <path d="M14 14h3v3h-3z" />
-      <path d="M21 14v.01M14 21h.01M18 18h.01M21 21h.01" />
+    <svg width={size} height={size} viewBox="0 0 80 80" role="img" aria-label="Inkstock">
+      <rect x="0" y="0" width="80" height="80" rx="20" fill={brand} />
+      <path d="M40 12 C57 31.6 57 52 40 68 C23 52 23 31.6 40 12 Z" fill="#ffffff" />
+      <rect x="33" y="36" width="14" height="4" rx="2" fill={brand} />
+      <rect x="31" y="44" width="18" height="4" rx="2" fill={brand} />
+      <rect x="33" y="52" width="14" height="4" rx="2" fill={brand} />
     </svg>
   )
 }
@@ -415,13 +407,11 @@ export default function App() {
       {status === 'idle' ? (
         <Stack gap="xl" mt="8vh">
           <Stack gap="sm" align="center" ta="center">
-            <ThemeIcon size={72} radius="50%" variant="light">
-              <QrIcon />
-            </ThemeIcon>
-            <Title order={2}>Scan a container tag</Title>
+            <InkstockMark size={72} />
+            <Title order={2}>Inkstock</Title>
             <Text c="dimmed" size="sm" maw={320}>
-              Point your camera at the QR code on a drawer or container to see what's inside and
-              rename it.
+              Scan the tag on a drawer or container to see what's inside, adjust stock, and rename
+              it.
             </Text>
           </Stack>
 
