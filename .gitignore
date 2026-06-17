@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Local secrets — contains InvenTree API token, never commit
+.env
+.env.production
+.env*.local
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
