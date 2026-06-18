@@ -25,6 +25,7 @@ import BarcodeScanner from './BarcodeScanner'
 import AddItemDrawer from './AddItemDrawer'
 import MoveItemDrawer from './MoveItemDrawer'
 import SearchDrawer from './SearchDrawer'
+import SettingsDrawer from './SettingsDrawer'
 import {
   apiGet,
   apiSend,
@@ -107,9 +108,29 @@ function TrashIcon() {
   )
 }
 
+function GearIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+    </svg>
+  )
+}
+
 export default function App() {
   const [scannerOpened, setScannerOpened] = useState(false)
   const [searchOpened, setSearchOpened] = useState(false)
+  const [settingsOpened, setSettingsOpened] = useState(false)
   const [addItemOpened, setAddItemOpened] = useState(false)
   const [moveItem, setMoveItem] = useState<StockItemRecord | null>(null)
   const [tagId, setTagId] = useState(readInitialTagId)
@@ -404,6 +425,21 @@ export default function App() {
 
   return (
     <Container size={440} px="md" py="xl">
+      {status !== 'ready' ? (
+        <Group justify="flex-end" mb="xs">
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="lg"
+            radius="md"
+            aria-label="Server settings"
+            onClick={() => setSettingsOpened(true)}
+          >
+            <GearIcon />
+          </ActionIcon>
+        </Group>
+      ) : null}
+
       {status === 'idle' ? (
         <Stack gap="xl" mt="8vh">
           <Stack gap="sm" align="center" ta="center">
@@ -925,6 +961,12 @@ export default function App() {
         opened={scannerOpened}
         onClose={() => setScannerOpened(false)}
         onDetected={openContainerForTag}
+      />
+
+      <SettingsDrawer
+        opened={settingsOpened}
+        onClose={() => setSettingsOpened(false)}
+        onSaved={showFlash}
       />
     </Container>
   )

@@ -73,8 +73,56 @@ export function extractTagId(rawValue: string) {
   )
 }
 
-export function getApiBaseUrl() {
+const API_BASE_OVERRIDE_KEY = 'inkstock.apiBaseUrl'
+
+// The address baked into the build at compile time (from .env). Empty in dev so
+// requests go same-origin through the Vite proxy.
+export function getDefaultApiBaseUrl() {
   return import.meta.env.VITE_INVENTREE_API_BASE_URL?.trim().replace(/\/$/, '') ?? window.location.origin
+}
+
+// A server address the user saved on the device, overriding the baked-in
+// default. Lets the app switch between e.g. home Wi-Fi and a phone-hotspot
+// address without rebuilding the APK.
+export function getApiBaseOverride() {
+  try {
+    return localStorage.getItem(API_BASE_OVERRIDE_KEY)?.trim().replace(/\/$/, '') ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export function setApiBaseOverride(value: string) {
+  const cleaned = value.trim().replace(/\/$/, '')
+  try {
+    if (cleaned) {
+      localStorage.setItem(API_BASE_OVERRIDE_KEY, cleaned)
+    } else {
+      localStorage.removeItem(API_BASE_OVERRIDE_KEY)
+    }
+  } catch {
+    // Storage unavailable (e.g. private mode) — silently fall back to the default.
+  }
+}
+
+export function getApiBaseUrl() {
+  return getApiBaseOverride() || getDefaultApiBaseUrl()
+}
+
+// Quick reachability check for the settings screen: does the given address
+// answer the InvenTree API root with our token accepted?
+export async function testApiBaseUrl(baseUrl: string, signal?: AbortSignal): Promise<boolean> {
+  const trimmed = baseUrl.trim().replace(/\/$/, '')
+  const target = `${trimmed}/api/`
+  const response = await fetch(target, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      ...getAuthHeaders(),
+    },
+    signal,
+  })
+  return response.ok
 }
 
 export function getContainerEndpointTemplate() {
